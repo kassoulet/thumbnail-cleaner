@@ -53,11 +53,7 @@ widgets_states = {
     'stop': (0, 1, 0, 1, 0),
 }
 
-CACHE = os.path.expanduser('~/.cache/thumbnail-cleaner.cache')
-
-ORPHAN = '?'
-INVALID = '!'
-VALID = '='
+ORPHAN, INVALID, VALID = range(3)
 
 class ProgressInfo:
     """
@@ -78,6 +74,7 @@ class ProgressInfo:
     def __repr__(self):
         return repr(self.__dict__)
 
+
 class ThumbnailScanner():
     """
     The main thumbnail scanner.
@@ -88,11 +85,9 @@ class ThumbnailScanner():
 
     def scan(self):
         '''Start the walking thread.'''
-        self.load_db()
         self.progress.running = True
         self._do_walk()
         self.progress.running = False
-        self.save_db()
 
     def get_scan_info(self):
         '''Return a 0 -> 1.0 progress, plus some infos '''
@@ -126,12 +121,7 @@ class ThumbnailScanner():
                     self.progress.deletable_files += 1
                     self.progress.deletable_size += size
 
-                self.checked[name] = [status, True]
-
     def _get_status_from_thumbnail(self, filename, name):
-        status = self.search_in_db(name)
-        if status:
-            return status
         status = VALID
 
         uri = self._get_uri_from_thumbnail(filename)
@@ -179,33 +169,6 @@ class ThumbnailScanner():
         
         # and return the precious uri
         return chunk[uri_pos:uri_pos+uri_len]
-
-    def save_db(self):
-        try:
-            f = file(CACHE, 'w')
-            for name, status in self.checked.iteritems():
-                if status[1]:
-                    f.write(status[0]+name+'\n')
-        except:
-            pass
-
-    def load_db(self):
-        self.checked = {}
-        try:
-            f = file(CACHE)
-            for line in f:
-                line = line.strip()
-                status, name = line[0], line[1:]
-                self.checked[name] = [status, False]
-            print '%d file(s) in cache' % len(self.checked)
-        except:
-            pass
-
-    def search_in_db(self, name):
-        status = self.checked.get(name, None)
-        if status:
-            return status[0]
-        return None
 
 
 class ThreadedThumbnailScanner(Thread, ThumbnailScanner):
@@ -255,7 +218,7 @@ class CLIThumbnailScanner(ThreadedThumbnailScanner):
         info = self.get_scan_info()
         
         for f in self.deletable:
-            print f
+            os.remove(f)
         print len(self.deletable), 'outdated thumbnails,',
         print '%s removed.' % human_size(info.deletable_size)
 
@@ -304,10 +267,13 @@ class GTKThumbnailScanner(ThreadedThumbnailScanner):
 
     def remove_next_file(self):
         if self.deletable:
-            print self.deletable.pop(0)
+            os.remove(self.deletable.pop(0))
             return True
+        else:
+            self.progressbar.set_text('done')
         
     def on_clear(self, widget, data=None):
+        self.button_clear.set_sensitive(False)
         gobject.idle_add(self.remove_next_file)
     
     def update_progress(self):
@@ -318,15 +284,22 @@ class GTKThumbnailScanner(ThreadedThumbnailScanner):
         else:
             info.progress = max(info.progress, 0)
             message = "Scanning... (%(current_file)d/%(total_files)d)" % info
-            self.label.set_markup('<b>%d</b> invalid thumbnails, <b>%s</b>.' % 
-                (info.deletable_files, human_size(info.deletable_size)))
             self.progressbar.set_text(message)
+            if info.deletable_files:
+                self.label.set_markup('<b>%d</b> invalid thumbnails, <b>%s</b>.' % 
+                (info.deletable_files, human_size(info.deletable_size)))
+            else:
+                self.label.set_markup('No outdated thumbnails.')
+
             self.progressbar.set_fraction(max(info.progress, 0))
         if self.isAlive():
             return True
         else:
-            self.button_clear.set_sensitive(True)
-            self.progressbar.set_text('ready to clear')
+            if info.deletable_files:
+                self.button_clear.set_sensitive(True)
+                self.progressbar.set_text('ready to clear')
+            else:
+                self.progressbar.set_text('scan finished')
 
     def scan(self):
         self.start()
